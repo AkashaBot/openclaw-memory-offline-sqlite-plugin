@@ -138,231 +138,262 @@ export default {
   kind: "memory",
   register(api: OpenClawPluginApi) {
     // Tool: memory_store
-    api.registerTool({
-      name: "memory_store",
-      description: "Store a memory item in offline SQLite memory.",
-      schema: Type.Object({
-        text: Type.String({ minLength: 1 }),
-        importance: Type.Optional(Type.Number({ minimum: 0, maximum: 1 })),
-        category: Type.Optional(Type.String()),
-      }),
-      async run({ text, importance, category }) {
-        const cfg = getCfg(api);
-        const db = openDb(cfg.dbPath);
-        initSchema(db);
+    api.registerTool(
+      {
+        name: "memory_store",
+        label: "Memory Store",
+        description: "Store a memory item in offline SQLite memory.",
+        parameters: Type.Object({
+          text: Type.String({ minLength: 1 }),
+          importance: Type.Optional(Type.Number({ minimum: 0, maximum: 1 })),
+          category: Type.Optional(Type.String()),
+        }),
+        async execute(_toolCallId, params) {
+          const { text, importance, category } = params as any;
 
-        const id = randomUUID();
-        const meta = { importance: importance ?? null, category: category ?? "other" };
-        const item = addItem(db, {
-          id,
-          title: null,
-          text,
-          tags: category ? String(category) : null,
-          source: "openclaw",
-          source_id: null,
-          meta,
-        });
+          const cfg = getCfg(api);
+          const db = openDb(cfg.dbPath);
+          initSchema(db);
 
-        return { ok: true, id: item.id };
+          const id = randomUUID();
+          const meta = { importance: importance ?? null, category: category ?? "other" };
+          const item = addItem(db, {
+            id,
+            title: null,
+            text,
+            tags: category ? String(category) : null,
+            source: "openclaw",
+            source_id: null,
+            meta,
+          });
+
+          return {
+            content: [{ type: "text", text: `Stored memory (${item.id})` }],
+            details: { ok: true, id: item.id },
+          };
+        },
       },
-    });
+      { name: "memory_store" },
+    );
 
     // Tool: memory_recall
-    api.registerTool({
-      name: "memory_recall",
-      description: "Recall relevant memories from offline SQLite memory.",
-      schema: Type.Object({
-        query: Type.String({ minLength: 1 }),
-        limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })),
-      }),
-      async run({ query, limit }) {
-        const results = await recall(api, query, limit);
+    api.registerTool(
+      {
+        name: "memory_recall",
+        label: "Memory Recall",
+        description: "Recall relevant memories from offline SQLite memory.",
+        parameters: Type.Object({
+          query: Type.String({ minLength: 1 }),
+          limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })),
+        }),
+        async execute(_toolCallId, params) {
+          const { query, limit } = params as any;
+          const results = await recall(api, query, limit);
 
-        // Normalize to a compact, agent-friendly payload.
-        const items = results.map((r: any) => {
-          const item = r.item ?? r;
+          const items = results.map((r: any) => {
+            const item = r.item ?? r;
+            return {
+              id: item.id,
+              created_at: item.created_at,
+              title: item.title,
+              text: item.text,
+              tags: item.tags,
+              source: item.source,
+              source_id: item.source_id,
+              score: (r.score ?? r.lexicalScore ?? null) as number | null,
+              lexicalScore: (r.lexicalScore ?? null) as number | null,
+              semanticScore: (r.semanticScore ?? null) as number | null,
+            };
+          });
+
+          const preview = items
+            .slice(0, Math.min(5, items.length))
+            .map((it: any, i: number) => `${i + 1}. ${String(it.text ?? "").slice(0, 160)}`)
+            .join("\n");
+
           return {
-            id: item.id,
-            created_at: item.created_at,
-            title: item.title,
-            text: item.text,
-            tags: item.tags,
-            source: item.source,
-            source_id: item.source_id,
-            score: (r.score ?? r.lexicalScore ?? null) as number | null,
-            lexicalScore: (r.lexicalScore ?? null) as number | null,
-            semanticScore: (r.semanticScore ?? null) as number | null,
+            content: [{ type: "text", text: items.length ? `Found ${items.length} memories:\n${preview}` : "No relevant memories found." }],
+            details: { ok: true, query, items },
           };
-        });
-
-        return { ok: true, query, items };
+        },
       },
-    });
+      { name: "memory_recall" },
+    );
 
     // Tool: memory_forget
-    api.registerTool({
-      name: "memory_forget",
-      description: "Delete a memory item from offline SQLite memory.",
-      schema: Type.Object({
-        memoryId: Type.Optional(Type.String()),
-        query: Type.Optional(Type.String()),
-      }),
-      async run({ memoryId, query }) {
-        const cfg = getCfg(api);
-        const db = openDb(cfg.dbPath);
-        initSchema(db);
+    api.registerTool(
+      {
+        name: "memory_forget",
+        label: "Memory Forget",
+        description: "Delete a memory item from offline SQLite memory.",
+        parameters: Type.Object({
+          memoryId: Type.Optional(Type.String()),
+          query: Type.Optional(Type.String()),
+        }),
+        async execute(_toolCallId, params) {
+          const { memoryId, query } = params as any;
 
-        const id = memoryId ?? null;
-        if (!id && !query) {
-          return { ok: false, error: "Provide memoryId or query" };
-        }
+          const cfg = getCfg(api);
+          const db = openDb(cfg.dbPath);
+          initSchema(db);
 
-        let deleteId = id;
-        if (!deleteId && query) {
-          const results = await recall(api, query, 5);
-          const first = (results as any[])[0];
-          deleteId = first?.item?.id ?? null;
-          if (!deleteId) {
-            return { ok: true, deleted: 0 };
+          const id = memoryId ?? null;
+          if (!id && !query) {
+            return {
+              content: [{ type: "text", text: "Provide memoryId or query." }],
+              details: { ok: false, error: "Provide memoryId or query" },
+            };
           }
-        }
 
-        const stmt = db.prepare("DELETE FROM items WHERE id = ?");
-        const info = stmt.run(deleteId);
-        return { ok: true, deleted: Number(info.changes ?? 0), id: deleteId };
+          let deleteId = id;
+          if (!deleteId && query) {
+            const results = await recall(api, query, 5);
+            const first = (results as any[])[0];
+            deleteId = first?.item?.id ?? null;
+            if (!deleteId) {
+              return { content: [{ type: "text", text: "No matches." }], details: { ok: true, deleted: 0 } };
+            }
+          }
+
+          const stmt = db.prepare("DELETE FROM items WHERE id = ?");
+          const info = stmt.run(deleteId);
+          const deleted = Number((info as any).changes ?? 0);
+
+          return {
+            content: [{ type: "text", text: deleted ? `Deleted memory ${deleteId}` : `No deletion for ${deleteId}` }],
+            details: { ok: true, deleted, id: deleteId },
+          };
+        },
       },
-    });
+      { name: "memory_forget" },
+    );
 
     // Tool: memory_stats
-    api.registerTool({
-      name: "memory_stats",
-      description: "Get basic stats about the offline SQLite memory DB (counts, size, tags breakdown).",
-      schema: Type.Object({
-        includeTags: Type.Optional(Type.Boolean({ default: true })),
-        topTags: Type.Optional(Type.Integer({ minimum: 1, maximum: 50, default: 10 })),
-      }),
-      async run({ includeTags, topTags }) {
-        const cfg = getCfg(api);
-        const db = openDb(cfg.dbPath);
-        initSchema(db);
+    api.registerTool(
+      {
+        name: "memory_stats",
+        label: "Memory Stats",
+        description: "Get basic stats about the offline SQLite memory DB (counts, size, tags breakdown).",
+        parameters: Type.Object({
+          includeTags: Type.Optional(Type.Boolean({ default: true })),
+          topTags: Type.Optional(Type.Integer({ minimum: 1, maximum: 50, default: 10 })),
+        }),
+        async execute(_toolCallId, params) {
+          const { includeTags, topTags } = params as any;
 
-        const items = (db.prepare("SELECT COUNT(*) as c FROM items").get() as any).c as number;
-        const embeddings = (db.prepare("SELECT COUNT(*) as c FROM embeddings").get() as any).c as number;
-        const range = db.prepare("SELECT MIN(created_at) as min, MAX(created_at) as max FROM items").get() as any;
+          const cfg = getCfg(api);
+          const db = openDb(cfg.dbPath);
+          initSchema(db);
 
-        let dbBytes: number | null = null;
-        try {
-          dbBytes = fs.statSync(cfg.dbPath).size;
-        } catch {
-          // ignore
-        }
+          const items = (db.prepare("SELECT COUNT(*) as c FROM items").get() as any).c as number;
+          const embeddings = (db.prepare("SELECT COUNT(*) as c FROM embeddings").get() as any).c as number;
+          const range = db.prepare("SELECT MIN(created_at) as min, MAX(created_at) as max FROM items").get() as any;
 
-        let tags: Array<{ tag: string | null; count: number }> | undefined;
-        if (includeTags !== false) {
-          const limit = Math.max(1, Math.min(50, Number(topTags ?? 10)));
-          const rows = db
-            .prepare(
-              "SELECT tags as tag, COUNT(*) as c FROM items GROUP BY tags ORDER BY c DESC LIMIT ?"
-            )
-            .all(limit) as any[];
-          tags = rows.map((r) => ({ tag: r.tag ?? null, count: Number(r.c ?? 0) }));
-        }
+          let dbBytes: number | null = null;
+          try {
+            dbBytes = fs.statSync(cfg.dbPath).size;
+          } catch {}
 
-        return {
-          ok: true,
-          dbPath: cfg.dbPath,
-          dbBytes,
-          items,
-          embeddings,
-          createdAt: {
-            min: range?.min ?? null,
-            max: range?.max ?? null,
-          },
-          tags,
-          retention: {
-            retentionDays: cfg.retentionDays,
-            protectedTags: cfg.retentionProtectedTags,
-          },
-        };
+          let tags: Array<{ tag: string | null; count: number }> | undefined;
+          if (includeTags !== false) {
+            const limit = Math.max(1, Math.min(50, Number(topTags ?? 10)));
+            const rows = db
+              .prepare("SELECT tags as tag, COUNT(*) as c FROM items GROUP BY tags ORDER BY c DESC LIMIT ?")
+              .all(limit) as any[];
+            tags = rows.map((r) => ({ tag: r.tag ?? null, count: Number(r.c ?? 0) }));
+          }
+
+          const out = {
+            ok: true,
+            dbPath: cfg.dbPath,
+            dbBytes,
+            items,
+            embeddings,
+            createdAt: { min: range?.min ?? null, max: range?.max ?? null },
+            tags,
+            retention: { retentionDays: cfg.retentionDays, protectedTags: cfg.retentionProtectedTags },
+          };
+
+          return {
+            content: [{ type: "text", text: `items=${items}, embeddings=${embeddings}, dbBytes=${dbBytes ?? "?"}` }],
+            details: out,
+          };
+        },
       },
-    });
+      { name: "memory_stats" },
+    );
 
     // Tool: memory_gc
-    api.registerTool({
-      name: "memory_gc",
-      description:
-        "Garbage-collect old memory items based on retentionDays (optional). Protected tags are never deleted.",
-      schema: Type.Object({
-        dryRun: Type.Optional(Type.Boolean({ default: true })),
-        retentionDays: Type.Optional(Type.Integer({ minimum: 1, maximum: 3650 })),
-        protectTags: Type.Optional(Type.Array(Type.String())),
-        limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 5000, default: 1000 })),
-      }),
-      async run({ dryRun, retentionDays, protectTags, limit }) {
-        const cfg = getCfg(api);
-        const db = openDb(cfg.dbPath);
-        initSchema(db);
+    api.registerTool(
+      {
+        name: "memory_gc",
+        label: "Memory GC",
+        description:
+          "Garbage-collect old memory items based on retentionDays (optional). Protected tags are never deleted.",
+        parameters: Type.Object({
+          dryRun: Type.Optional(Type.Boolean({ default: true })),
+          retentionDays: Type.Optional(Type.Integer({ minimum: 1, maximum: 3650 })),
+          protectTags: Type.Optional(Type.Array(Type.String())),
+          limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 5000, default: 1000 })),
+        }),
+        async execute(_toolCallId, params) {
+          const { dryRun, retentionDays, protectTags, limit } = params as any;
 
-        const days = retentionDays ?? cfg.retentionDays;
-        if (days === null || days === undefined) {
-          return { ok: true, skipped: true, reason: "retentionDays not set" };
-        }
+          const cfg = getCfg(api);
+          const db = openDb(cfg.dbPath);
+          initSchema(db);
 
-        const protectedTags = (protectTags ?? cfg.retentionProtectedTags ?? ["personal"]).map(String);
-        const cutoff = Date.now() - Number(days) * 24 * 60 * 60 * 1000;
-        const lim = Math.max(1, Math.min(5000, Number(limit ?? 1000)));
+          const days = retentionDays ?? cfg.retentionDays;
+          if (days === null || days === undefined) {
+            return { content: [{ type: "text", text: "GC skipped (retentionDays not set)." }], details: { ok: true, skipped: true, reason: "retentionDays not set" } };
+          }
 
-        const placeholders = protectedTags.map(() => "?").join(",");
-        const whereProtect = protectedTags.length ? `AND (tags IS NULL OR tags NOT IN (${placeholders}))` : "";
+          const protectedTags = (protectTags ?? cfg.retentionProtectedTags ?? ["personal"]).map(String);
+          const cutoff = Date.now() - Number(days) * 24 * 60 * 60 * 1000;
+          const lim = Math.max(1, Math.min(5000, Number(limit ?? 1000)));
 
-        const sql =
-          `SELECT id, created_at, tags FROM items ` +
-          `WHERE created_at < ? ${whereProtect} ` +
-          `ORDER BY created_at ASC LIMIT ?`;
+          const placeholders = protectedTags.map(() => "?").join(",");
+          const whereProtect = protectedTags.length ? `AND (tags IS NULL OR tags NOT IN (${placeholders}))` : "";
 
-        const rows = db.prepare(sql).all(cutoff, ...(protectedTags.length ? protectedTags : []), lim) as any[];
-        const ids = rows.map((r) => String(r.id));
+          const sql =
+            `SELECT id, created_at, tags FROM items ` +
+            `WHERE created_at < ? ${whereProtect} ` +
+            `ORDER BY created_at ASC LIMIT ?`;
 
-        if (dryRun !== false) {
+          const rows = db.prepare(sql).all(cutoff, ...(protectedTags.length ? protectedTags : []), lim) as any[];
+          const ids = rows.map((r) => String(r.id));
+
+          if (dryRun !== false) {
+            return {
+              content: [{ type: "text", text: `GC dry-run: candidates=${ids.length} (retentionDays=${days})` }],
+              details: { ok: true, dryRun: true, cutoff, retentionDays: Number(days), protectedTags, candidates: ids.length, sample: rows.slice(0, 20) },
+            };
+          }
+
+          const tx = db.transaction(() => {
+            if (ids.length === 0) return { deletedItems: 0, deletedEmbeddings: 0 };
+            const inPlaceholders = ids.map(() => "?").join(",");
+            const delEmb = db.prepare(`DELETE FROM embeddings WHERE item_id IN (${inPlaceholders})`).run(...ids);
+            const delItems = db.prepare(`DELETE FROM items WHERE id IN (${inPlaceholders})`).run(...ids);
+            return {
+              deletedItems: Number((delItems as any).changes ?? 0),
+              deletedEmbeddings: Number((delEmb as any).changes ?? 0),
+            };
+          });
+
+          const res = tx();
+          try {
+            db.exec("VACUUM");
+          } catch {}
+
           return {
-            ok: true,
-            dryRun: true,
-            cutoff,
-            retentionDays: Number(days),
-            protectedTags,
-            candidates: ids.length,
-            sample: rows.slice(0, 20),
+            content: [{ type: "text", text: `GC deleted items=${res.deletedItems}, embeddings=${res.deletedEmbeddings}` }],
+            details: { ok: true, dryRun: false, cutoff, retentionDays: Number(days), protectedTags, deleted: res },
           };
-        }
-
-        const tx = db.transaction(() => {
-          if (ids.length === 0) return { deletedItems: 0, deletedEmbeddings: 0 };
-
-          const inPlaceholders = ids.map(() => "?").join(",");
-          const delEmb = db.prepare(`DELETE FROM embeddings WHERE item_id IN (${inPlaceholders})`).run(...ids);
-          const delItems = db.prepare(`DELETE FROM items WHERE id IN (${inPlaceholders})`).run(...ids);
-          return {
-            deletedItems: Number((delItems as any).changes ?? 0),
-            deletedEmbeddings: Number((delEmb as any).changes ?? 0),
-          };
-        });
-
-        const res = tx();
-        // Optional compaction
-        try {
-          db.exec("VACUUM");
-        } catch {}
-
-        return {
-          ok: true,
-          dryRun: false,
-          cutoff,
-          retentionDays: Number(days),
-          protectedTags,
-          deleted: res,
-        };
+        },
       },
-    });
+      { name: "memory_gc" },
+    );
 
     // ========================================================================
     // Lifecycle Hooks
