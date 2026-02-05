@@ -221,8 +221,14 @@ export default {
             .map((r: any) => {
               const item = r.item ?? r;
               const text = String(item.text ?? "").replace(/\s+/g, " ").trim();
-              const snippet = text.length > 220 ? text.slice(0, 220) + "…" : text;
-              return `- ${snippet}`;
+              const snippet = text.length > 200 ? text.slice(0, 200) + "…" : text;
+
+              const tag = String(item.tags ?? "").trim();
+              const source = String(item.source ?? "").trim();
+              const date = item.created_at ? new Date(Number(item.created_at)).toISOString().slice(0, 10) : "";
+
+              const bits = [tag && `tag:${tag}`, source && `src:${source}`, date && `date:${date}`].filter(Boolean).join(" ");
+              return bits ? `- ${snippet} (${bits})` : `- ${snippet}`;
             })
             .join("\n");
 
