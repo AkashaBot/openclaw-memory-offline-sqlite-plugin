@@ -25,6 +25,12 @@ function defaultDbPath() {
   return path.join(base, "offline.sqlite");
 }
 
+// Some runtimes expect a plain JSON-schema object (no prototypes/symbols).
+// TypeBox outputs plain objects, but this forces safe JSON serialization.
+function asJsonSchema<T>(schema: T): T {
+  return JSON.parse(JSON.stringify(schema)) as T;
+}
+
 function getCfg(api: OpenClawPluginApi) {
   const cfg = (api.pluginConfig ?? {}) as any;
   return {
@@ -143,11 +149,13 @@ export default {
         name: "memory_store",
         label: "Memory Store",
         description: "Store a memory item in offline SQLite memory.",
-        parameters: Type.Object({
-          text: Type.String({ minLength: 1 }),
-          importance: Type.Optional(Type.Number({ minimum: 0, maximum: 1 })),
-          category: Type.Optional(Type.String()),
-        }),
+        parameters: asJsonSchema(
+          Type.Object({
+            text: Type.String({ minLength: 1 }),
+            importance: Type.Optional(Type.Number({ minimum: 0, maximum: 1 })),
+            category: Type.Optional(Type.String()),
+          }),
+        ),
         async execute(_toolCallId, params) {
           const { text, importance, category } = params as any;
 
@@ -182,10 +190,12 @@ export default {
         name: "memory_recall",
         label: "Memory Recall",
         description: "Recall relevant memories from offline SQLite memory.",
-        parameters: Type.Object({
-          query: Type.String({ minLength: 1 }),
-          limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })),
-        }),
+        parameters: asJsonSchema(
+          Type.Object({
+            query: Type.String({ minLength: 1 }),
+            limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })),
+          }),
+        ),
         async execute(_toolCallId, params) {
           const { query, limit } = params as any;
           const results = await recall(api, query, limit);
@@ -226,10 +236,12 @@ export default {
         name: "memory_forget",
         label: "Memory Forget",
         description: "Delete a memory item from offline SQLite memory.",
-        parameters: Type.Object({
-          memoryId: Type.Optional(Type.String()),
-          query: Type.Optional(Type.String()),
-        }),
+        parameters: asJsonSchema(
+          Type.Object({
+            memoryId: Type.Optional(Type.String()),
+            query: Type.Optional(Type.String()),
+          }),
+        ),
         async execute(_toolCallId, params) {
           const { memoryId, query } = params as any;
 
@@ -274,10 +286,12 @@ export default {
         name: "memory_stats",
         label: "Memory Stats",
         description: "Get basic stats about the offline SQLite memory DB (counts, size, tags breakdown).",
-        parameters: Type.Object({
-          includeTags: Type.Optional(Type.Boolean({ default: true })),
-          topTags: Type.Optional(Type.Integer({ minimum: 1, maximum: 50, default: 10 })),
-        }),
+        parameters: asJsonSchema(
+          Type.Object({
+            includeTags: Type.Optional(Type.Boolean({ default: true })),
+            topTags: Type.Optional(Type.Integer({ minimum: 1, maximum: 50, default: 10 })),
+          }),
+        ),
         async execute(_toolCallId, params) {
           const { includeTags, topTags } = params as any;
 
@@ -330,12 +344,14 @@ export default {
         label: "Memory GC",
         description:
           "Garbage-collect old memory items based on retentionDays (optional). Protected tags are never deleted.",
-        parameters: Type.Object({
-          dryRun: Type.Optional(Type.Boolean({ default: true })),
-          retentionDays: Type.Optional(Type.Integer({ minimum: 1, maximum: 3650 })),
-          protectTags: Type.Optional(Type.Array(Type.String())),
-          limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 5000, default: 1000 })),
-        }),
+        parameters: asJsonSchema(
+          Type.Object({
+            dryRun: Type.Optional(Type.Boolean({ default: true })),
+            retentionDays: Type.Optional(Type.Integer({ minimum: 1, maximum: 3650 })),
+            protectTags: Type.Optional(Type.Array(Type.String())),
+            limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 5000, default: 1000 })),
+          }),
+        ),
         async execute(_toolCallId, params) {
           const { dryRun, retentionDays, protectTags, limit } = params as any;
 
