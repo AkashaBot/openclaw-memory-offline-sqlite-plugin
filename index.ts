@@ -47,6 +47,10 @@ function getCfg(api: OpenClawPluginApi) {
     captureMaxChars: Math.max(200, Math.min(20000, Number(cfg.captureMaxChars ?? 4000))),
     captureDedupeWindowMs: Math.max(0, Math.min(1000 * 60 * 60 * 24 * 30, Number(cfg.captureDedupeWindowMs ?? 1000 * 60 * 60 * 24))),
     captureDedupeMaxCheck: Math.max(10, Math.min(2000, Number(cfg.captureDedupeMaxCheck ?? 300))),
+
+    // Retention (optional)
+    retentionDays: cfg.retentionDays === undefined || cfg.retentionDays === null ? null : Math.max(1, Math.min(3650, Number(cfg.retentionDays))),
+    retentionProtectedTags: Array.isArray(cfg.retentionProtectedTags) ? cfg.retentionProtectedTags.map(String) : ["personal"],
   };
 }
 
@@ -275,6 +279,87 @@ export default {
             max: range?.max ?? null,
           },
           tags,
+          retention: {
+            retentionDays: cfg.retentionDays,
+            protectedTags: cfg.retentionProtectedTags,
+          },
+        };
+      },
+    });
+
+    // Tool: memory_gc
+    api.registerTool({
+      name: "memory_gc",
+      description:
+        "Garbage-collect old memory items based on retentionDays (optional). Protected tags are never deleted.",
+      schema: Type.Object({
+        dryRun: Type.Optional(Type.Boolean({ default: true })),
+        retentionDays: Type.Optional(Type.Integer({ minimum: 1, maximum: 3650 })),
+        protectTags: Type.Optional(Type.Array(Type.String())),
+        limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 5000, default: 1000 })),
+      }),
+      async run({ dryRun, retentionDays, protectTags, limit }) {
+        const cfg = getCfg(api);
+        const db = openDb(cfg.dbPath);
+        initSchema(db);
+
+        const days = retentionDays ?? cfg.retentionDays;
+        if (days === null || days === undefined) {
+          return { ok: true, skipped: true, reason: "retentionDays not set" };
+        }
+
+        const protectedTags = (protectTags ?? cfg.retentionProtectedTags ?? ["personal"]).map(String);
+        const cutoff = Date.now() - Number(days) * 24 * 60 * 60 * 1000;
+        const lim = Math.max(1, Math.min(5000, Number(limit ?? 1000)));
+
+        const placeholders = protectedTags.map(() => "?").join(",");
+        const whereProtect = protectedTags.length ? `AND (tags IS NULL OR tags NOT IN (${placeholders}))` : "";
+
+        const sql =
+          `SELECT id, created_at, tags FROM items ` +
+          `WHERE created_at < ? ${whereProtect} ` +
+          `ORDER BY created_at ASC LIMIT ?`;
+
+        const rows = db.prepare(sql).all(cutoff, ...(protectedTags.length ? protectedTags : []), lim) as any[];
+        const ids = rows.map((r) => String(r.id));
+
+        if (dryRun !== false) {
+          return {
+            ok: true,
+            dryRun: true,
+            cutoff,
+            retentionDays: Number(days),
+            protectedTags,
+            candidates: ids.length,
+            sample: rows.slice(0, 20),
+          };
+        }
+
+        const tx = db.transaction(() => {
+          if (ids.length === 0) return { deletedItems: 0, deletedEmbeddings: 0 };
+
+          const inPlaceholders = ids.map(() => "?").join(",");
+          const delEmb = db.prepare(`DELETE FROM embeddings WHERE item_id IN (${inPlaceholders})`).run(...ids);
+          const delItems = db.prepare(`DELETE FROM items WHERE id IN (${inPlaceholders})`).run(...ids);
+          return {
+            deletedItems: Number((delItems as any).changes ?? 0),
+            deletedEmbeddings: Number((delEmb as any).changes ?? 0),
+          };
+        });
+
+        const res = tx();
+        // Optional compaction
+        try {
+          db.exec("VACUUM");
+        } catch {}
+
+        return {
+          ok: true,
+          dryRun: false,
+          cutoff,
+          retentionDays: Number(days),
+          protectedTags,
+          deleted: res,
         };
       },
     });

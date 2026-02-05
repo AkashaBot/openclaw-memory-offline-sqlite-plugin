@@ -23,7 +23,10 @@
       "captureMinChars": { "type": "integer", "minimum": 0, "maximum": 500, "default": 16 },
       "captureMaxChars": { "type": "integer", "minimum": 200, "maximum": 20000, "default": 4000 },
       "captureDedupeWindowMs": { "type": "integer", "minimum": 0, "maximum": 2592000000, "default": 86400000 },
-      "captureDedupeMaxCheck": { "type": "integer", "minimum": 10, "maximum": 2000, "default": 300 }
+      "captureDedupeMaxCheck": { "type": "integer", "minimum": 10, "maximum": 2000, "default": 300 },
+
+      "retentionDays": { "type": "integer", "minimum": 1, "maximum": 3650, "description": "Optional retention window (days). If unset, no GC will delete old items." },
+      "retentionProtectedTags": { "type": "array", "items": { "type": "string" }, "description": "Tags that should never be deleted by GC.", "default": ["personal"] }
     }
   },
   "uiHints": {
