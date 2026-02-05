@@ -229,6 +229,56 @@ export default {
       },
     });
 
+    // Tool: memory_stats
+    api.registerTool({
+      name: "memory_stats",
+      description: "Get basic stats about the offline SQLite memory DB (counts, size, tags breakdown).",
+      schema: Type.Object({
+        includeTags: Type.Optional(Type.Boolean({ default: true })),
+        topTags: Type.Optional(Type.Integer({ minimum: 1, maximum: 50, default: 10 })),
+      }),
+      async run({ includeTags, topTags }) {
+        const cfg = getCfg(api);
+        const db = openDb(cfg.dbPath);
+        initSchema(db);
+
+        const items = (db.prepare("SELECT COUNT(*) as c FROM items").get() as any).c as number;
+        const embeddings = (db.prepare("SELECT COUNT(*) as c FROM embeddings").get() as any).c as number;
+        const range = db.prepare("SELECT MIN(created_at) as min, MAX(created_at) as max FROM items").get() as any;
+
+        let dbBytes: number | null = null;
+        try {
+          dbBytes = fs.statSync(cfg.dbPath).size;
+        } catch {
+          // ignore
+        }
+
+        let tags: Array<{ tag: string | null; count: number }> | undefined;
+        if (includeTags !== false) {
+          const limit = Math.max(1, Math.min(50, Number(topTags ?? 10)));
+          const rows = db
+            .prepare(
+              "SELECT tags as tag, COUNT(*) as c FROM items GROUP BY tags ORDER BY c DESC LIMIT ?"
+            )
+            .all(limit) as any[];
+          tags = rows.map((r) => ({ tag: r.tag ?? null, count: Number(r.c ?? 0) }));
+        }
+
+        return {
+          ok: true,
+          dbPath: cfg.dbPath,
+          dbBytes,
+          items,
+          embeddings,
+          createdAt: {
+            min: range?.min ?? null,
+            max: range?.max ?? null,
+          },
+          tags,
+        };
+      },
+    });
+
     // ========================================================================
     // Lifecycle Hooks
     // ========================================================================
