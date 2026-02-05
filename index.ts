@@ -73,6 +73,16 @@ function shouldSkipCapture(text: string, minChars: number) {
   return false;
 }
 
+let lastHybridDegradedLogTs = 0;
+
+function maybeLogHybridDegraded(api: OpenClawPluginApi, reason: string) {
+  const now = Date.now();
+  const intervalMs = 1000 * 60 * 60; // 1h
+  if (now - lastHybridDegradedLogTs < intervalMs) return;
+  lastHybridDegradedLogTs = now;
+  api.logger?.warn?.(`memory-offline-sqlite: hybrid degraded to lexical (${reason})`);
+}
+
 async function recall(api: OpenClawPluginApi, query: string, limit?: number) {
   const cfg = getCfg(api);
   const topK = Math.max(1, Math.min(20, limit ?? cfg.topK));
@@ -88,14 +98,30 @@ async function recall(api: OpenClawPluginApi, query: string, limit?: number) {
       ollamaTimeoutMs: cfg.ollamaTimeoutMs,
     };
 
+    // Proactive check: if Ollama embeddings endpoint is down/slow, avoid doing
+    // hybridSearch work and fall back to lexical immediately.
+    try {
+      const base = cfg.ollamaBaseUrl.replace(/\/$/, "");
+      const timeoutMs = Math.min(cfg.ollamaTimeoutMs, 800);
+      const res = await fetch(`${base}/v1/embeddings`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: cfg.embeddingModel, input: query }),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      if (!res.ok) throw new Error(`embeddings HTTP ${res.status}`);
+    } catch (err) {
+      maybeLogHybridDegraded(api, String(err));
+      return searchItems(db, query, topK).results as LexicalResult[];
+    }
+
     // Use core helper to escape query once, then pass escaped query into hybridSearch.
     const escapedQuery = searchItems(db, query, 1).escapedQuery;
-    const results = await hybridSearch(
-      db,
-      memCfg,
-      escapedQuery,
-      { topK, candidates: cfg.candidates, semanticWeight: cfg.semanticWeight }
-    );
+    const results = await hybridSearch(db, memCfg, escapedQuery, {
+      topK,
+      candidates: cfg.candidates,
+      semanticWeight: cfg.semanticWeight,
+    });
 
     return results as HybridResult[];
   }
