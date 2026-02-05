@@ -1,0 +1,12 @@
+{
+  "name": "@akasha/memory-offline-sqlite",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "./index.ts",
+  "dependencies": {
+    "openclaw": "^2026.2.1",
+    "@akasha/openclaw-memory-offline-core": "file:../openclaw-memory-offline-sqlite/packages/core",
+    "@sinclair/typebox": "^0.34.35"
+  }
+}

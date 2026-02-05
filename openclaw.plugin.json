@@ -1,0 +1,35 @@
+{
+  "id": "memory-offline-sqlite",
+  "kind": "memory",
+  "name": "Memory (Offline SQLite)",
+  "description": "Offline long-term memory using SQLite FTS5 + optional Ollama embeddings rerank.",
+  "version": "0.0.1",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "dbPath": { "type": "string", "description": "Path to the SQLite database file" },
+      "autoRecall": { "type": "boolean", "default": true },
+      "autoCapture": { "type": "boolean", "default": true },
+      "topK": { "type": "integer", "minimum": 1, "maximum": 20, "default": 5 },
+      "mode": { "type": "string", "enum": ["lexical", "hybrid"], "default": "lexical" },
+      "candidates": { "type": "integer", "minimum": 10, "maximum": 500, "default": 50 },
+      "semanticWeight": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.7 },
+      "ollamaBaseUrl": { "type": "string", "default": "http://127.0.0.1:11434" },
+      "embeddingModel": { "type": "string", "default": "bge-m3" },
+      "ollamaTimeoutMs": { "type": "integer", "minimum": 250, "maximum": 60000, "default": 3000 },
+
+      "captureMaxPerTurn": { "type": "integer", "minimum": 1, "maximum": 50, "default": 20 },
+      "captureMinChars": { "type": "integer", "minimum": 0, "maximum": 500, "default": 16 },
+      "captureMaxChars": { "type": "integer", "minimum": 200, "maximum": 20000, "default": 4000 },
+      "captureDedupeWindowMs": { "type": "integer", "minimum": 0, "maximum": 2592000000, "default": 86400000 },
+      "captureDedupeMaxCheck": { "type": "integer", "minimum": 10, "maximum": 2000, "default": 300 }
+    }
+  },
+  "uiHints": {
+    "dbPath": { "label": "SQLite DB path", "placeholder": "~/.openclaw/memory/offline.sqlite" },
+    "mode": { "label": "Search mode" },
+    "ollamaBaseUrl": { "label": "Ollama base URL" },
+    "embeddingModel": { "label": "Embedding model" }
+  }
+}
