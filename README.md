@@ -1,6 +1,6 @@
 # openclaw-memory-offline-sqlite-plugin
 
-External **OpenClaw memory plugin** backed by **SQLite (FTS5)** with optional **Ollama embeddings rerank** (hybrid search).
+External **OpenClaw memory plugin** backed by **SQLite (FTS5)** with optional **embeddings rerank** (hybrid search).
 
 ## What it does
 - Provides tools:
@@ -26,8 +26,13 @@ External **OpenClaw memory plugin** backed by **SQLite (FTS5)** with optional **
         "config": {
           "dbPath": "C:\\Users\\<you>\\.openclaw\\memory\\offline.sqlite",
           "mode": "hybrid",
+
+          // Provider-specific config
+          "provider": "ollama",
           "ollamaBaseUrl": "http://127.0.0.1:11434",
           "embeddingModel": "bge-m3",
+          "ollamaTimeoutMs": 3000,
+
           "topK": 5
         }
       }
@@ -37,6 +42,38 @@ External **OpenClaw memory plugin** backed by **SQLite (FTS5)** with optional **
 ```
 
 Restart OpenClaw after updating the config.
+
+## Embeddings providers
+
+The underlying core library supports two providers:
+
+- `ollama` (default)
+- `openai`
+
+Example OpenAI config snippet:
+
+```jsonc
+{
+  "id": "memory-offline-sqlite",
+  "config": {
+    "dbPath": "~/.openclaw/memory/offline.sqlite",
+    "autoRecall": true,
+    "autoCapture": true,
+    "mode": "hybrid",
+    "topK": 5,
+    "candidates": 50,
+    "semanticWeight": 0.7,
+
+    // OpenAI-specific
+    "provider": "openai",
+    "openaiBaseUrl": "https://api.openai.com",
+    "openaiApiKey": "sk-...",          // set via env/secret manager in practice
+    "openaiModel": "text-embedding-3-small"
+  }
+}
+```
+
+If `provider` is omitted, the core falls back to `"ollama"` with model `bge-m3`.
 
 ## Config
 See `openclaw.plugin.json` for the full schema.
@@ -48,6 +85,11 @@ Notable options:
 - Capture noise controls:
   - `captureMinChars`, `captureMaxPerTurn`, `captureMaxChars`
   - `captureDedupeWindowMs`, `captureDedupeMaxCheck`
+
+## Status
+- Core: `@akasha/openclaw-memory-offline-core@0.1.0`
+- CLI: `@akasha/openclaw-mem@0.1.0`
+- Plugin: `@akasha/memory-offline-sqlite` (this repo)
 
 ## License
 MIT
