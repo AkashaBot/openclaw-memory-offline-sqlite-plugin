@@ -87,8 +87,8 @@ Notable options:
   - `captureDedupeWindowMs`, `captureDedupeMaxCheck`
 
 ## Status
-- Core: `@akasha/openclaw-memory-offline-core@0.1.0`
-- CLI: `@akasha/openclaw-mem@0.1.0`
+- Core: `@akashabot/openclaw-memory-offline-core@0.1.0`
+- CLI: `@akashabot/openclaw-mem@0.1.0`
 - Plugin: `@akasha/memory-offline-sqlite` (this repo)
 
 ## License
