@@ -14,7 +14,7 @@ import {
   type MemConfig,
   type LexicalResult,
   type HybridResult,
-} from "@akasha/openclaw-memory-offline-core";
+} from "@akashabot/openclaw-memory-offline-core";
 
 function defaultDbPath() {
   // Keep within OpenClaw state dir by default when available, fallback to ~/.openclaw/memory

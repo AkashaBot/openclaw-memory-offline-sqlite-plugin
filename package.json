@@ -6,7 +6,7 @@
   "main": "./index.ts",
   "dependencies": {
     "openclaw": "^2026.2.1",
-    "@akasha/openclaw-memory-offline-core": "file:../../openclaw-memory-offline-sqlite/packages/core",
+    "@akashabot/openclaw-memory-offline-core": "0.1.0",
     "@sinclair/typebox": "^0.34.35"
   }
 }
