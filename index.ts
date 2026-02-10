@@ -13,6 +13,16 @@ import {
   searchItems,
   hybridSearch,
   hybridSearchFiltered,
+  // Phase 2: Facts
+  insertFact,
+  searchFacts,
+  getFactsBySubject,
+  getAllFacts,
+  extractFactsSimple,
+  // Phase 3: Knowledge Graph
+  getEntityGraph,
+  getRelatedEntities,
+  getGraphStats,
   type MemConfig,
   type LexicalResult,
   type HybridResult,
@@ -609,6 +619,39 @@ export default {
 
         if (stored > 0) {
           api.logger?.info?.(`memory-offline-sqlite: auto-captured ${stored} messages`);
+        }
+
+        // Phase 2: Auto-extract facts from captured messages
+        if (cfg.autoExtractFacts !== false) {
+          let factsExtracted = 0;
+          for (let i = 0; i < Math.min(maxPerTurn, cleaned.length); i++) {
+            const { text } = cleaned[i]!;
+            const extracted = extractFactsSimple(text);
+            
+            for (const f of extracted) {
+              // Only store facts with reasonable confidence
+              if (f.confidence < 0.6) continue;
+              
+              try {
+                insertFact(db, {
+                  id: randomUUID(),
+                  subject: f.subject,
+                  predicate: f.predicate,
+                  object: f.object,
+                  confidence: f.confidence,
+                  source_item_id: null,
+                  entity_id: "auto-extracted",
+                });
+                factsExtracted++;
+              } catch {
+                // Ignore duplicate/insert errors
+              }
+            }
+          }
+          
+          if (factsExtracted > 0) {
+            api.logger?.info?.(`memory-offline-sqlite: auto-extracted ${factsExtracted} facts`);
+          }
         }
       });
     }
