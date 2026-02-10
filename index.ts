@@ -8,12 +8,15 @@ import { randomUUID, createHash } from "node:crypto";
 import {
   openDb,
   initSchema,
+  runMigrations,
   addItem,
   searchItems,
   hybridSearch,
+  hybridSearchFiltered,
   type MemConfig,
   type LexicalResult,
   type HybridResult,
+  type FilterOpts,
 } from "@akashabot/openclaw-memory-offline-core";
 
 function defaultDbPath() {
@@ -93,12 +96,13 @@ function maybeLogHybridDegraded(api: OpenClawPluginApi, reason: string) {
   api.logger?.warn?.(`memory-offline-sqlite: hybrid degraded to lexical (${reason})`);
 }
 
-async function recall(api: OpenClawPluginApi, query: string, limit?: number) {
+async function recall(api: OpenClawPluginApi, query: string, limit?: number, filter?: FilterOpts) {
   const cfg = getCfg(api);
   const topK = Math.max(1, Math.min(20, limit ?? cfg.topK));
 
   const db = openDb(cfg.dbPath);
   initSchema(db);
+  runMigrations(db); // Phase 1: ensure attribution columns exist
 
   if (cfg.mode === "hybrid") {
     const memCfg: MemConfig = {
@@ -127,6 +131,18 @@ async function recall(api: OpenClawPluginApi, query: string, limit?: number) {
 
     // Use core helper to escape query once, then pass escaped query into hybridSearch.
     const escapedQuery = searchItems(db, query, 1).escapedQuery;
+    
+    // Phase 1: Use hybridSearchFiltered if filters are provided
+    if (filter && (filter.entity_id || filter.process_id || filter.session_id)) {
+      const results = await hybridSearchFiltered(db, memCfg, escapedQuery, {
+        topK,
+        candidates: cfg.candidates,
+        semanticWeight: cfg.semanticWeight,
+        filter,
+      });
+      return results as HybridResult[];
+    }
+
     const results = await hybridSearch(db, memCfg, escapedQuery, {
       topK,
       candidates: cfg.candidates,
@@ -154,14 +170,18 @@ export default {
             text: Type.String({ minLength: 1 }),
             importance: Type.Optional(Type.Number({ minimum: 0, maximum: 1 })),
             category: Type.Optional(Type.String()),
+            entityId: Type.Optional(Type.String({ description: "Who said/wrote this (e.g., 'loic', 'system')" })),
+            processId: Type.Optional(Type.String({ description: "Which agent/process captured this (e.g., 'akasha')" })),
+            sessionId: Type.Optional(Type.String({ description: "Session/conversation grouping" })),
           }),
         ),
         async execute(_toolCallId, params) {
-          const { text, importance, category } = params as any;
+          const { text, importance, category, entityId, processId, sessionId } = params as any;
 
           const cfg = getCfg(api);
           const db = openDb(cfg.dbPath);
           initSchema(db);
+          runMigrations(db);
 
           const id = randomUUID();
           const meta = { importance: importance ?? null, category: category ?? "other" };
@@ -173,11 +193,14 @@ export default {
             source: "openclaw",
             source_id: null,
             meta,
+            entity_id: entityId ?? null,
+            process_id: processId ?? "akasha",
+            session_id: sessionId ?? null,
           });
 
           return {
             content: [{ type: "text", text: `Stored memory (${item.id})` }],
-            details: { ok: true, id: item.id },
+            details: { ok: true, id: item.id, entity_id: item.entity_id, process_id: item.process_id, session_id: item.session_id },
           };
         },
       },
@@ -194,11 +217,19 @@ export default {
           Type.Object({
             query: Type.String({ minLength: 1 }),
             limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })),
+            entityId: Type.Optional(Type.String({ description: "Filter by who said/wrote this" })),
+            processId: Type.Optional(Type.String({ description: "Filter by which agent captured this" })),
+            sessionId: Type.Optional(Type.String({ description: "Filter by session/conversation" })),
           }),
         ),
         async execute(_toolCallId, params) {
-          const { query, limit } = params as any;
-          const results = await recall(api, query, limit);
+          const { query, limit, entityId, processId, sessionId } = params as any;
+          
+          const filter: FilterOpts | undefined = (entityId || processId || sessionId)
+            ? { entity_id: entityId ?? null, process_id: processId ?? null, session_id: sessionId ?? null }
+            : undefined;
+          
+          const results = await recall(api, query, limit, filter);
 
           const items = results.map((r: any) => {
             const item = r.item ?? r;
@@ -210,6 +241,9 @@ export default {
               tags: item.tags,
               source: item.source,
               source_id: item.source_id,
+              entity_id: item.entity_id ?? null,
+              process_id: item.process_id ?? null,
+              session_id: item.session_id ?? null,
               score: (r.score ?? r.lexicalScore ?? null) as number | null,
               lexicalScore: (r.lexicalScore ?? null) as number | null,
               semanticScore: (r.semanticScore ?? null) as number | null,
@@ -223,7 +257,7 @@ export default {
 
           return {
             content: [{ type: "text", text: items.length ? `Found ${items.length} memories:\n${preview}` : "No relevant memories found." }],
-            details: { ok: true, query, items },
+            details: { ok: true, query, items, filter },
           };
         },
       },
@@ -248,6 +282,7 @@ export default {
           const cfg = getCfg(api);
           const db = openDb(cfg.dbPath);
           initSchema(db);
+          runMigrations(db);
 
           const id = memoryId ?? null;
           if (!id && !query) {
@@ -298,6 +333,7 @@ export default {
           const cfg = getCfg(api);
           const db = openDb(cfg.dbPath);
           initSchema(db);
+          runMigrations(db);
 
           const items = (db.prepare("SELECT COUNT(*) as c FROM items").get() as any).c as number;
           const embeddings = (db.prepare("SELECT COUNT(*) as c FROM embeddings").get() as any).c as number;
@@ -317,6 +353,12 @@ export default {
             tags = rows.map((r) => ({ tag: r.tag ?? null, count: Number(r.c ?? 0) }));
           }
 
+          // Phase 1: Count entities
+          let entities: string[] = [];
+          try {
+            entities = db.prepare("SELECT DISTINCT entity_id FROM items WHERE entity_id IS NOT NULL").pluck().all() as string[];
+          } catch {}
+
           const out = {
             ok: true,
             dbPath: cfg.dbPath,
@@ -325,11 +367,12 @@ export default {
             embeddings,
             createdAt: { min: range?.min ?? null, max: range?.max ?? null },
             tags,
+            entities,
             retention: { retentionDays: cfg.retentionDays, protectedTags: cfg.retentionProtectedTags },
           };
 
           return {
-            content: [{ type: "text", text: `items=${items}, embeddings=${embeddings}, dbBytes=${dbBytes ?? "?"}` }],
+            content: [{ type: "text", text: `items=${items}, embeddings=${embeddings}, dbBytes=${dbBytes ?? "?"}, entities=${entities.length}` }],
             details: out,
           };
         },
@@ -358,6 +401,7 @@ export default {
           const cfg = getCfg(api);
           const db = openDb(cfg.dbPath);
           initSchema(db);
+          runMigrations(db);
 
           const days = retentionDays ?? cfg.retentionDays;
           if (days === null || days === undefined) {
@@ -462,6 +506,7 @@ export default {
         const cfg = getCfg(api);
         const db = openDb(cfg.dbPath);
         initSchema(db);
+        runMigrations(db); // Phase 1: ensure attribution columns exist
 
         // Extract user+assistant texts (capture ALL, but with sane caps)
         const captures: Array<{ role: "user" | "assistant"; text: string }> = [];
@@ -487,7 +532,7 @@ export default {
 
         // Basic hygiene: drop injected context + empty, trim, cap length
         const cleaned = captures
-          .map((c) => ({
+          .map((c) => (c) => ({
             role: c.role,
             text: String(c.text ?? "").trim(),
           }))
@@ -542,6 +587,11 @@ export default {
             h,
           };
 
+          // Phase 1: Set attribution fields
+          const entity_id = role === "user" ? "user" : "agent";
+          const process_id = "akasha";
+          const session_id = event?.sessionKey ?? null;
+
           addItem(db, {
             id: randomUUID(),
             title: null,
@@ -550,6 +600,9 @@ export default {
             source: "openclaw",
             source_id: null,
             meta,
+            entity_id,
+            process_id,
+            session_id,
           });
           stored++;
         }
