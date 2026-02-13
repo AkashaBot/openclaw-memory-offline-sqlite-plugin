@@ -25,6 +25,13 @@ In short: **core = storage + search**, **plugin = integration + automation**.
   - `before_agent_start`: injects relevant memories
   - `agent_end`: auto‑captures user + assistant messages (with noise controls)
 
+## Install packages (npm)
+```bash
+npm install @akashabot/openclaw-memory-offline-core
+npm install -g @akashabot/openclaw-mem
+npm install -g @akashabot/openclaw-memory-mcp-server
+```
+
 ## Install (dev / local path)
 1) Clone somewhere on the machine running OpenClaw.
 2) Add the plugin path to your OpenClaw config:
