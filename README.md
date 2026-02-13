@@ -1,6 +1,19 @@
 # openclaw-memory-offline-sqlite-plugin
 
-External **OpenClaw memory plugin** backed by **SQLite (FTS5)** with optional **embeddings rerank** (hybrid search).
+External **OpenClaw memory plugin** that connects OpenClaw to the **SQLite offline memory core**.
+
+## Why the plugin matters
+The **core** (`@akashabot/openclaw-memory-offline-core`) is a standalone SQLite memory engine.  
+The **plugin** is the bridge that makes it *usable inside OpenClaw*:
+
+- wires the core into OpenClaw’s **memory slot**
+- exposes the **memory_* tools** to agents
+- enables **auto‑recall** before a turn and **auto‑capture** after a turn
+- applies **noise controls** (dedupe, min length, caps)
+
+In short: **core = storage + search**, **plugin = integration + automation**.
+
+---
 
 ## What it does
 - Provides tools:
@@ -9,7 +22,7 @@ External **OpenClaw memory plugin** backed by **SQLite (FTS5)** with optional **
   - `memory_forget(memoryId?, query?)`
 - Hooks:
   - `before_agent_start`: injects relevant memories
-  - `agent_end`: auto-captures user + assistant messages (with noise controls)
+  - `agent_end`: auto‑captures user + assistant messages (with noise controls)
 
 ## Install (dev / local path)
 1) Clone somewhere on the machine running OpenClaw.
@@ -87,9 +100,9 @@ Notable options:
   - `captureDedupeWindowMs`, `captureDedupeMaxCheck`
 
 ## Status
-- Core: `@akashabot/openclaw-memory-offline-core@0.1.0`
-- CLI: `@akashabot/openclaw-mem@0.1.0`
-- Plugin: `@akasha/memory-offline-sqlite` (this repo)
+- Core: `@akashabot/openclaw-memory-offline-core@0.1.1`
+- CLI: `@akashabot/openclaw-mem@0.1.1`
+- Plugin: `@akasha/memory-offline-sqlite@0.1.0` (this repo)
 
 ## License
 MIT
