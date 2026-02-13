@@ -4,6 +4,7 @@ External **OpenClaw memory plugin** that connects OpenClaw to the **SQLite offli
 
 ## Why the plugin matters
 The **core** (`@akashabot/openclaw-memory-offline-core`) is a standalone SQLite memory engine.  
+Core repo: https://github.com/AkashaBot/openclaw-memory-offline-sqlite
 The **plugin** is the bridge that makes it *usable inside OpenClaw*:
 
 - wires the core into OpenClaw’s **memory slot**
