@@ -1,9 +1,12 @@
 {
   "name": "@akasha/memory-offline-sqlite",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": true,
   "type": "module",
   "main": "./index.ts",
+  "scripts": {
+    "test": "node tests/sanitizeCaptures.test.js"
+  },
   "dependencies": {
     "openclaw": "^2026.2.1",
     "@akashabot/openclaw-memory-offline-core": "^0.5.0",

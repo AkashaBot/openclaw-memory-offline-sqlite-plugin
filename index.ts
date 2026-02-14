@@ -5,6 +5,8 @@ import os from "node:os";
 import fs from "node:fs";
 import { randomUUID, createHash } from "node:crypto";
 
+import { sanitizeCaptures } from "./capture-utils.js";
+
 import {
   openDb,
   initSchema,
@@ -511,49 +513,50 @@ export default {
 
     if (getCfg(api).autoCapture) {
       api.on("agent_end", async (event: any) => {
-        if (!event?.success || !Array.isArray(event?.messages) || event.messages.length === 0) return;
-
-        const cfg = getCfg(api);
-        const db = openDb(cfg.dbPath);
-        initSchema(db);
-        runMigrations(db); // Phase 1: ensure attribution columns exist
-
-        // Extract user+assistant texts (capture ALL, but with sane caps)
-        const captures: Array<{ role: "user" | "assistant"; text: string }> = [];
-
-        for (const msg of event.messages) {
-          if (!msg || typeof msg !== "object") continue;
-          const role = (msg as any).role;
-          if (role !== "user" && role !== "assistant") continue;
-
-          const content = (msg as any).content;
-          if (typeof content === "string") {
-            captures.push({ role, text: content });
-            continue;
+        try {
+          if (!event?.success) return;
+          const msgs = event?.messages;
+          if (!Array.isArray(msgs)) {
+            api.logger?.warn?.(`memory-offline-sqlite: agent_end missing messages (type=${typeof msgs})`);
+            return;
           }
-          if (Array.isArray(content)) {
-            for (const block of content) {
-              if (block && typeof block === "object" && (block as any).type === "text" && typeof (block as any).text === "string") {
-                captures.push({ role, text: (block as any).text });
+          if (msgs.length === 0) return;
+
+          const cfg = getCfg(api);
+          const db = openDb(cfg.dbPath);
+          initSchema(db);
+          runMigrations(db); // Phase 1: ensure attribution columns exist
+
+          // Extract user+assistant texts (capture ALL, but with sane caps)
+          const captures: Array<{ role: "user" | "assistant"; text: string }> = [];
+
+          for (const msg of msgs) {
+            if (!msg || typeof msg !== "object") continue;
+            const role = (msg as any).role;
+            if (role !== "user" && role !== "assistant") continue;
+
+            const content = (msg as any).content;
+            if (typeof content === "string") {
+              captures.push({ role, text: content });
+              continue;
+            }
+            if (Array.isArray(content)) {
+              for (const block of content) {
+                if (block && typeof block === "object" && (block as any).type === "text" && typeof (block as any).text === "string") {
+                  captures.push({ role, text: (block as any).text });
+                }
               }
             }
           }
-        }
 
-        // Basic hygiene: drop injected context + empty, trim, cap length
-        const cleaned = captures
-          .map((c) => (c) => ({
-            role: c.role,
-            text: String(c.text ?? "").trim(),
-          }))
-          .filter((c) => c.text.length > 0)
-          .filter((c) => !c.text.includes("<relevant-memories>"));
+          // Basic hygiene: drop injected context + empty, trim, cap length
+          const cleaned = sanitizeCaptures(captures);
 
-        if (!cleaned.length) return;
+          if (!Array.isArray(cleaned) || cleaned.length === 0) return;
 
-        const maxPerTurn = cfg.captureMaxPerTurn;
-        const now = Date.now();
-        const cutoff = now - cfg.captureDedupeWindowMs;
+          const maxPerTurn = cfg.captureMaxPerTurn;
+          const now = Date.now();
+          const cutoff = now - cfg.captureDedupeWindowMs;
 
         // Dedupe: compute hashes for candidate texts; check recent window for existing hashes.
         // We keep this cheap: query only recent N rows.
@@ -626,7 +629,7 @@ export default {
           let factsExtracted = 0;
           for (let i = 0; i < Math.min(maxPerTurn, cleaned.length); i++) {
             const { text } = cleaned[i]!;
-            const extracted = extractFactsSimple(text);
+            const extracted = extractFactsSimple(text) ?? [];
             
             for (const f of extracted) {
               // Only store facts with reasonable confidence
@@ -652,6 +655,11 @@ export default {
           if (factsExtracted > 0) {
             api.logger?.info?.(`memory-offline-sqlite: auto-extracted ${factsExtracted} facts`);
           }
+        }
+        } catch (err: any) {
+          const msg = `memory-offline-sqlite: agent_end failed: ${err?.stack ?? String(err)}`;
+          api.logger?.error?.(msg);
+          try { console.error(msg); } catch {}
         }
       });
     }
