@@ -168,9 +168,12 @@ async function recall(api: OpenClawPluginApi, query: string, limit?: number, fil
 }
 
 export default {
-  id: "memory-offline-sqlite",
+  id: "openclaw-memory-offline-sqlite-plugin",
   kind: "memory",
   register(api: OpenClawPluginApi) {
+    try {
+      api.logger?.info?.(`memory-offline-sqlite loaded ${new Date().toISOString()}`);
+    } catch {}
     // Tool: memory_store
     api.registerTool(
       {
@@ -477,33 +480,81 @@ export default {
         if (prompt.length < 5) return;
 
         try {
+          const cfg = getCfg(api);
+          const db = openDb(cfg.dbPath);
+          initSchema(db);
+          runMigrations(db);
+
+          // Short-term memory: last N messages from same session (bounded by chars)
+          const sessionId = event?.sessionKey ?? null;
+          let shortTermBlock = "";
+          if (sessionId) {
+            const rows = db.prepare(
+              `SELECT created_at, text, tags
+               FROM items
+               WHERE session_id = ? AND tags IN ('user','assistant')
+               ORDER BY created_at DESC
+               LIMIT 50`
+            ).all(sessionId) as any[];
+
+            const maxMsgs = 15;
+            const maxChars = 2000;
+            let count = 0;
+            let chars = 0;
+            const lines: string[] = [];
+
+            for (const r of rows.reverse()) {
+              if (count >= maxMsgs || chars >= maxChars) break;
+              const role = r.tags === 'assistant' ? 'assistant' : 'user';
+              const text = String(r.text ?? "").replace(/\s+/g, " ").trim();
+              if (!text) continue;
+              const snippet = text.length > 300 ? text.slice(0, 300) + "…" : text;
+              const line = `[role: ${role}] ${snippet}`;
+              if (chars + line.length > maxChars) break;
+              lines.push(line);
+              chars += line.length;
+              count++;
+            }
+
+            if (lines.length) {
+              shortTermBlock = `<short-term-memory>\n` +
+                `Recent messages (same session):\n` +
+                lines.join("\n") +
+                `\n</short-term-memory>`;
+            }
+          }
+
           const results = await recall(api, prompt, 3);
-          if (!results.length) return;
+          let recallBlock = "";
+          if (results.length) {
+            const lines = results
+              .slice(0, 3)
+              .map((r: any) => {
+                const item = r.item ?? r;
+                const text = String(item.text ?? "").replace(/\s+/g, " ").trim();
+                const snippet = text.length > 200 ? text.slice(0, 200) + "…" : text;
 
-          const lines = results
-            .slice(0, 3)
-            .map((r: any) => {
-              const item = r.item ?? r;
-              const text = String(item.text ?? "").replace(/\s+/g, " ").trim();
-              const snippet = text.length > 200 ? text.slice(0, 200) + "…" : text;
+                const tag = String(item.tags ?? "").trim();
+                const source = String(item.source ?? "").trim();
+                const date = item.created_at ? new Date(Number(item.created_at)).toISOString().slice(0, 10) : "";
 
-              const tag = String(item.tags ?? "").trim();
-              const source = String(item.source ?? "").trim();
-              const date = item.created_at ? new Date(Number(item.created_at)).toISOString().slice(0, 10) : "";
+                const bits = [tag && `tag:${tag}`, source && `src:${source}`, date && `date:${date}`].filter(Boolean).join(" ");
+                return bits ? `- ${snippet} (${bits})` : `- ${snippet}`;
+              })
+              .join("\n");
 
-              const bits = [tag && `tag:${tag}`, source && `src:${source}`, date && `date:${date}`].filter(Boolean).join(" ");
-              return bits ? `- ${snippet} (${bits})` : `- ${snippet}`;
-            })
-            .join("\n");
+            api.logger?.info?.(`memory-offline-sqlite: injecting memories (n=${Math.min(3, results.length)})`);
 
-          api.logger?.info?.(`memory-offline-sqlite: injecting memories (n=${Math.min(3, results.length)})`);
-
-          return {
-            prependContext:
-              `<relevant-memories>\n` +
+            recallBlock = `<relevant-memories>\n` +
               `The following memories may be relevant to this conversation:\n` +
               `${lines}\n` +
-              `</relevant-memories>`,
+              `</relevant-memories>`;
+          }
+
+          if (!shortTermBlock && !recallBlock) return;
+
+          return {
+            prependContext: [shortTermBlock, recallBlock].filter(Boolean).join("\n\n"),
           };
         } catch (err) {
           api.logger?.warn?.(`memory-offline-sqlite: autoRecall failed: ${String(err)}`);

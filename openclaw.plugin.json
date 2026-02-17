@@ -1,5 +1,5 @@
 {
-  "id": "memory-offline-sqlite",
+  "id": "openclaw-memory-offline-sqlite-plugin",
   "kind": "memory",
   "name": "Memory (Offline SQLite)",
   "description": "Offline long-term memory using SQLite FTS5 + optional Ollama embeddings rerank.",
