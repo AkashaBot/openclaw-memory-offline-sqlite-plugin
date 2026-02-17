@@ -7,10 +7,10 @@ The **core** (`@akashabot/openclaw-memory-offline-core`) is a standalone SQLite 
 Core repo: https://github.com/AkashaBot/openclaw-memory-offline-sqlite
 The **plugin** is the bridge that makes it *usable inside OpenClaw*:
 
-- wires the core into OpenClaw’s **memory slot**
+- wires the core into OpenClaw's **memory slot**
 - exposes the **memory_* tools** to agents
 - enables **auto‑recall** before a turn and **auto‑capture** after a turn
-- applies **noise controls** (dedupe, min length, caps)
+- applies **smart filtering** (dedupe, noise controls, context sanitization)
 
 In short: **core = storage + search**, **plugin = integration + automation**.
 
@@ -21,9 +21,11 @@ In short: **core = storage + search**, **plugin = integration + automation**.
   - `memory_store(text, importance?, category?)`
   - `memory_recall(query, limit?)`
   - `memory_forget(memoryId?, query?)`
+  - `memory_stats()` — get DB stats (counts, size, tags)
+  - `memory_gc(retentionDays?, protectTags?)` — cleanup old memories
 - Hooks:
-  - `before_agent_start`: injects relevant memories
-  - `agent_end`: auto‑captures user + assistant messages (with noise controls)
+  - `before_agent_start`: injects relevant memories + short-term context (last 15 msgs from same session)
+  - `agent_end`: auto‑captures user + assistant messages with noise filtering
 
 ## Install packages (npm)
 ```bash
@@ -40,9 +42,9 @@ npm install -g @akashabot/openclaw-memory-mcp-server
 {
   "plugins": {
     "load": { "paths": ["C:\\path\\to\\openclaw-memory-offline-sqlite-plugin"] },
-    "slots": { "memory": "memory-offline-sqlite" },
+    "slots": { "memory": "openclaw-memory-offline-sqlite-plugin" },
     "entries": {
-      "memory-offline-sqlite": {
+      "openclaw-memory-offline-sqlite-plugin": {
         "enabled": true,
         "config": {
           "dbPath": "C:\\Users\\<you>\\.openclaw\\memory\\offline.sqlite",
@@ -75,7 +77,7 @@ Example OpenAI config snippet:
 
 ```jsonc
 {
-  "id": "memory-offline-sqlite",
+  "id": "openclaw-memory-offline-sqlite-plugin",
   "config": {
     "dbPath": "~/.openclaw/memory/offline.sqlite",
     "autoRecall": true,
@@ -100,17 +102,44 @@ If `provider` is omitted, the core falls back to `"ollama"` with model `bge-m3`.
 See `openclaw.plugin.json` for the full schema.
 
 Notable options:
+- `autoRecall`: enable auto-injection of relevant memories (default: true)
+- `autoCapture`: enable auto-capture of messages after each turn (default: true)
 - `mode`: `lexical` | `hybrid`
 - `topK`: number of memories injected / returned
 - `ollamaBaseUrl`, `embeddingModel`, `ollamaTimeoutMs`
-- Capture noise controls:
-  - `captureMinChars`, `captureMaxPerTurn`, `captureMaxChars`
-  - `captureDedupeWindowMs`, `captureDedupeMaxCheck`
+
+### Capture noise controls
+- `captureMinChars`: minimum message length to capture (default: 16)
+- `captureMaxChars`: maximum characters per message (default: 4000)
+- `captureMaxPerTurn`: max messages to capture per turn (default: 20)
+- `captureDedupeWindowMs`: deduplication window in ms (default: 24h)
+- `captureDedupeMaxCheck`: number of recent rows to check for dedup (default: 300)
+
+### Retention (optional)
+- `retentionDays`: auto-delete memories older than N days
+- `retentionProtectedTags`: tags that should never be deleted (default: ["personal"])
+
+## What's new (v0.3.0)
+
+### Smart deduplication
+Messages are now deduplicated using SHA1 hashes over normalized text. The plugin checks recent messages within `captureDedupeWindowMs` (default 24h) to avoid storing duplicates. This dramatically reduces noise in the memory DB.
+
+### Context sanitization
+The `sanitizeCaptures()` utility filters out:
+- Empty messages
+- Injected `<relevant-memories>` context (prevents loops)
+- Pure acknowledgment words (`ok`, `thanks`, `👍`, etc.)
+
+### Short-term memory
+The `before_agent_start` hook now also injects **short-term context** — the last 15 messages from the same session (capped at 2000 chars). This gives the agent immediate conversation history without full recall.
+
+### Stats & GC
+- `memory_stats()`: returns item counts, DB size, and tag breakdown
+- `memory_gc()`: bulk delete old items based on retention policy, with protected tags support
 
 ## Status
-- Core: `@akashabot/openclaw-memory-offline-core@0.1.1`
-- CLI: `@akashabot/openclaw-mem@0.1.1`
-- Plugin: `@akasha/memory-offline-sqlite@0.1.0` (this repo)
+- Core: `@akashabot/openclaw-memory-offline-core@0.5.0`
+- Plugin: `openclaw-memory-offline-sqlite-plugin@0.3.0`
 
 ## License
 MIT
